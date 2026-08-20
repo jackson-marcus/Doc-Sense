@@ -1,0 +1,33 @@
+# Pipeline configuration. Paths are relative to the repo root.
+
+ingestion:
+  raw_dir: data/raw_pdfs
+  ocr_dir: data/ocr_text
+  # Pages with fewer extractable characters than this are treated as scanned.
+  min_chars_per_page: 40
+  ocr_dpi: 200
+  ocr_lang: eng
+
+indexing:
+  chroma_dir: data/chroma
+  collection: docsense
+  embedding_model: sentence-transformers/all-MiniLM-L6-v2
+  chunk_size: 900          # characters
+  chunk_overlap: 150
+  batch_size: 64
+
+retrieval:
+  top_k: 5
+  candidates: 20           # per retriever, before fusion
+  rrf_k: 60                # reciprocal-rank-fusion constant
+  hybrid: true             # dense + BM25; false = dense only
+
+rag:
+  prompt_path: configs/prompts/qa.txt
+  judge_prompt_path: configs/prompts/judge.txt
+  max_context_chars: 12000
+  max_answer_tokens: 1024
+
+eval:
+  qa_pairs_path: data/eval/qa_pairs.jsonl
+  experiment_name: docsense-rag

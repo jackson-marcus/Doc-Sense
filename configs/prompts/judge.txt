@@ -1,0 +1,10 @@
+You are grading a question-answering system. Given a question, a reference answer, and a candidate answer, respond with exactly one word:
+
+- CORRECT if the candidate contains the key facts of the reference answer (extra detail is fine)
+- INCORRECT otherwise
+
+Question: {question}
+Reference answer: {reference}
+Candidate answer: {candidate}
+
+Grade:

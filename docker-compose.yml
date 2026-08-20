@@ -1,0 +1,30 @@
+services:
+  api:
+    build: .
+    env_file: .env
+    ports:
+      - "8010:8000"
+    volumes:
+      - ./data:/app/data
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    env_file: .env
+    ports:
+      - "8511:8501"
+    volumes:
+      - ./data:/app/data
+
+  # Optional local LLM: docker compose --profile local-llm up
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-llm"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+
+volumes:
+  ollama-models:

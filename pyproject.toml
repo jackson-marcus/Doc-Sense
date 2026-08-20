@@ -1,0 +1,66 @@
+[project]
+name = "docsense"
+version = "0.1.0"
+description = "Document-intelligence RAG platform: OCR, hybrid retrieval, and grounded Q&A with a hot-swappable Claude/Ollama backend."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pandas>=2.2,<3",
+    "numpy>=1.26,<3",
+    "pypdf>=4.2",
+    "pdf2image>=1.17",
+    "pytesseract>=0.3.10",
+    "pillow>=10.3",
+    "chromadb>=0.5",
+    "fastembed>=0.3",
+    "rank-bm25>=0.2.2",
+    "anthropic>=0.30",
+    "httpx>=0.27",
+    "mlflow>=2.14",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "sse-starlette>=2.1",
+    "streamlit>=1.36",
+    "pydantic-settings>=2.3",
+    "pyyaml>=6.0",
+    "reportlab>=4.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "pre-commit>=3.7",
+]
+
+[tool.uv]
+# See fraud-sentinel: broken ujson wheel on Windows boxes without msvcp140.dll.
+override-dependencies = ["ujson; sys_platform == 'linux'"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/docsense"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: tests that hit real LLM backends or download models",
+]
+
+[tool.coverage.run]
+source = ["src/docsense"]

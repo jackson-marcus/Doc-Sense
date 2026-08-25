@@ -1,4 +1,4 @@
-# DocSense — Enterprise Document Intelligence & Hybrid RAG Platform
+# DocSense — Document Intelligence (Declarative DAG Pipeline)
 
 <div align="center">
 
@@ -13,72 +13,95 @@
 
 </div>
 
-> **Production multimodal document intelligence platform: multi-engine OCR (scanned & digital PDFs), layout-aware chunking, hybrid BM25 + dense vector retrieval with Reciprocal Rank Fusion, and citation-grounded LLM question-answering.**
+> **Multimodal document intelligence and grounded Q&A system architected as an explicit Declarative Directed Acyclic Graph (DAG) pipeline with topological stage scheduling, node result caching, and hybrid lexical-dense retrieval.**
 
 ---
 
-## 📖 Executive Summary & Value Proposition
+## 🏛️ Architecture Pattern: Declarative DAG Pipeline Architecture
 
-**`docsense`** is a production-grade, end-to-end machine learning system built with strict engineering discipline, reproducible pipelines, and enterprise MLOps best practices. It bridges the gap between theoretical statistical rigor and high-availability operational microservices.
+Complex retrieval-augmented generation (RAG) systems suffer when implemented as procedural monolithic scripts. Changes to embedding models, chunking strategies, or fusion algorithms cause cascading side effects.
 
-## 📑 Core Methodologies & System Architecture
-
-### 1. Document Extraction & OCR Pipeline
-- Native text extraction for digital PDFs via PyPDF.
-- Automatic OCR fallback for scanned documents and images using Tesseract / PaddleOCR with deskewing and preprocessing.
-
-### 2. Structure-Aware Chunking & Token Windowing
-- Semantic boundary chunking preserving headers, paragraphs, and table boundaries.
-- Sliding token window with configurable overlap preventing context fragmentation.
-
-### 3. Hybrid Lexical-Dense Retrieval (RRF)
-- Combines exact-keyword BM25 retrieval with dense vector embeddings (Sentence-Transformers).
-- Merges ranked lists using Reciprocal Rank Fusion:
-$$	ext{RRF}(d) = \sum_{m \in \{	ext{BM25}, 	ext{Dense}\}} rac{1}{k + r_m(d)}, \quad k = 60$$
-
-### 4. Grounded Q&A with Provenance Citations
-- Generates precise, hallucination-free answers with exact document name, page number, and source text snippets.
-- Hot-swappable LLM backend supporting Anthropic Claude 3.5 Sonnet, local Ollama (Llama 3/Mistral), and deterministic mocks for CI.
-
-## 📊 Architecture & Pipeline
+`docsense` decomposes the document ingestion and Q&A lifecycle into a **Declarative Directed Acyclic Graph (DAG)** of pure, typed compute nodes:
 
 ```mermaid
-flowchart LR
-    Doc[PDF / Scanned Document] --> OCR[OCR & Text Extraction]
-    OCR --> Chunk[Structure-Aware Chunking]
-    Chunk --> Idx[Dual Indexing<br/>BM25 + Dense Embeddings]
-    Query[User Natural Question] --> RRF[Hybrid Retrieval & RRF]
-    Idx --> RRF
-    RRF --> Gen[Grounded LLM Generator<br/>Claude / Ollama]
-    Gen --> API[FastAPI :8010] --> UI[Streamlit Doc Workspace :8511]
+graph TD
+    subgraph Input_Stage ["Query Input"]
+        Q[Natural Language Question]
+    end
+
+    subgraph Retrieval_DAG ["Parallel Retrieval Stage"]
+        DenseNode[DenseRetrievalNode<br/>Cosine Nearest Neighbor]
+        BM25Node[BM25RetrievalNode<br/>Lexical BM25Okapi]
+    end
+
+    subgraph Fusion_DAG ["Rank Fusion & Context Assembly"]
+        RRFNode[RRFMergeNode<br/>Reciprocal Rank Fusion k=60]
+        CtxNode[ContextAssemblyNode<br/>Token Window Packing]
+    end
+
+    subgraph Synthesis_DAG ["Prompting & LLM Generation"]
+        PromptNode[PromptFormatNode<br/>Template Variable Binding]
+        LLMNode[LLMSynthesisNode<br/>Claude / Ollama / FakeProvider]
+    end
+
+    Q --> DenseNode
+    Q --> BM25Node
+    DenseNode --> RRFNode
+    BM25Node --> RRFNode
+    RRFNode --> CtxNode
+    CtxNode --> PromptNode
+    Q --> PromptNode
+    PromptNode --> LLMNode
 ```
 
-## 🛠️ Tech Stack & Engineering Standards
-- **AI & Retrieval:** Python 3.12, PyPDF, pdf2image, pytesseract, Sentence-Transformers, Rank-BM25, Anthropic API
-- **Serving & UI:** FastAPI, Streamlit, MLflow
-- **Testing:** Comprehensive Pytest suite covering loaders, chunkers, hybrid ranking, and chains
+### DAG Architecture Highlights
+- **`dag/node.py`**: Protocol defining `DAGNode` and `NodeResult` with explicit dependencies and typed context passing.
+- **`dag/graph.py`**: Topological graph runner implementing Kahn's algorithm with cycle detection and dependency validation.
+- **`dag/nodes.py`**: Discrete pure execution nodes:
+  - `DenseRetrievalNode`: Executes cosine semantic similarity over vector embeddings.
+  - `BM25RetrievalNode`: Executes tokenized lexical frequency scoring.
+  - `RRFMergeNode`: Performs non-parametric Reciprocal Rank Fusion ($k=60$).
+  - `ContextAssemblyNode`: Enforces strict character and token window constraints.
+  - `PromptFormatNode`: Injects retrieved snippets with page-level citations.
+  - `LLMSynthesisNode`: Invokes LLM providers with streaming and batch contracts.
+- **`dag/pipeline.py`**: High-level declarative pipeline factory `build_doc_qa_dag()` and execution runner.
 
+---
+
+## 📑 Core Methodologies & Retrieval Formulation
+
+### 1. Document Extraction & OCR Pipeline
+- Direct text extraction for digital PDFs via PyPDF.
+- Automatic OCR fallback for scanned documents and images using Tesseract / PaddleOCR with deskewing and contrast preprocessing.
+
+### 2. Hybrid Lexical-Dense Retrieval (RRF)
+- Merges ranked lists using Reciprocal Rank Fusion:
+  $$\text{RRF}(d) = \sum_{m \in \{\text{BM25}, \text{Dense}\}} \frac{1}{k + r_m(d)}, \quad k = 60$$
+- Eliminates score scale calibration issues between cosine distance and unbounded BM25 scores.
+
+### 3. Provenance-Grounded Citations
+- Generates verified answers with exact document IDs, page indices, and source snippets.
+- Hot-swappable LLM backends supporting Anthropic Claude, local Ollama (Llama 3/Mistral), and deterministic mocks for offline CI.
 
 ---
 
 ## 🚀 Quickstart & Setup Guide
 
 ### 1. Prerequisites & Environment Setup
-Using **[uv](https://docs.astral.sh/uv/)** for lightning-fast, reproducible dependency resolution:
-
 ```bash
-# Clone the repository
+# Clone repository
 git clone https://github.com/jackson-marcus/docsense.git
 cd docsense
 
-# Install dependencies and pre-commit hooks
+# Install dependencies via uv
+$env:UV_CACHE_DIR = "D:\ml-projects\.uv-cache"
 uv sync --group dev
 ```
 
 ### 2. Run Test Suite & Code Quality Checks
 ```bash
-# Run unit & integration tests with coverage
-uv run pytest --cov
+# Run unit & DAG pipeline tests
+uv run pytest -q
 
 # Run ruff linter and formatting checks
 uv run ruff check .
@@ -89,19 +112,9 @@ uv run ruff format --check .
 ```bash
 # Start FastAPI REST API (listening on port :8010)
 make api
-# Or: uv run uvicorn docsense.api.main:app --reload --port 8010
 
-# Start interactive Streamlit dashboard (listening on port :8511)
+# Start interactive Streamlit document workspace (listening on port :8511)
 make ui
-
-# Launch local MLflow Experiment Tracking UI (listening on port :5001)
-make mlflow
-```
-
-### 4. Run with Docker Compose
-```bash
-# Spin up the complete microservice stack
-docker compose up --build
 ```
 
 ---
@@ -110,19 +123,20 @@ docker compose up --build
 
 ```
 docsense/
-├── .github/workflows/ci.yml       # GitHub Actions CI pipeline (lint, test, build)
-├── configs/                      # Configuration files and hyperparameters
-├── data/                         # Data directory (raw, interim, processed)
-├── scripts/                      # Data generators and operational scripts
-├── src/docsense/               # Core Python package
-│   ├── api/                      # FastAPI routes, schemas, and endpoints
-│   ├── models/                   # Statistical models, ML algorithms, and estimators
-│   ├── ui/                       # Streamlit interactive application
-│   └── settings.py               # Centralized configuration & environment loader
-├── tests/                        # Comprehensive Pytest suite
+├── configs/                      # Configuration files (retrieval, chunking, LLM)
+├── data/                         # Document store and persistent indices
+├── src/docsense/                 # Core Python package
+│   ├── dag/                      # Declarative DAG pipeline (graph runner, node contracts, pipeline builder)
+│   ├── ingestion/                # OCR and PDF loaders
+│   ├── indexing/                 # Text chunker, embeddings, and Chroma store
+│   ├── retrieval/                # Dense and BM25 search engines with RRF fusion
+│   ├── llm/                      # LLM provider factory (Claude, Ollama, Fake)
+│   ├── rag/                      # RAG chain wrapping DAG execution
+│   ├── api/                      # FastAPI REST routes and streaming endpoints
+│   └── ui/                       # Streamlit interactive application
+├── tests/                        # Comprehensive Pytest suite covering DAG and RAG
 ├── docker-compose.yml            # Multi-service container orchestration
 ├── Dockerfile                    # Container definition for API service
-├── Makefile                      # Standardized project tasks
 └── pyproject.toml                # Pinned dependencies and tool configs
 ```
 
@@ -135,5 +149,20 @@ docsense/
 - **Upwork:** [Jackson Marcus on Upwork](https://www.upwork.com/freelancers/~012235717501ad9c7b)
 - **GitHub:** [@jackson-marcus](https://github.com/jackson-marcus)
 
-*Available for machine learning engineering, MLOps, data science, and AI system architecture consulting and contract engagements.*
+---
 
+## 👨‍💻 Author & Maintainer
+
+<div align="center">
+
+### **Jackson Marcus**
+**Senior AI & Machine Learning Engineer**
+*Building Production-Grade ML Systems, Agentic Architectures & Scalable Data Pipelines*
+
+[![GitHub Profile](https://img.shields.io/badge/GitHub-jackson--marcus-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/jackson-marcus)
+[![Upwork Portfolio](https://img.shields.io/badge/Upwork-Top%20Rated%20Plus-14A800?style=for-the-badge&logo=upwork&logoColor=white)](https://www.upwork.com/freelancers/~012235717501ad9c7b)
+[![Email Contact](https://img.shields.io/badge/Email-wajahatanees41%40gmail.com-D14836?style=for-the-badge&logo=gmail&logoColor=white)](mailto:wajahatanees41@gmail.com)
+
+📍 *Byron, GA, USA*
+
+</div>

@@ -1,10 +1,11 @@
-"""The RAG chain: retrieve -> build grounded prompt -> answer with citations."""
+"""The RAG chain: backed by the Declarative DAG Pipeline."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from docsense.dag.pipeline import run_doc_qa_dag
 from docsense.llm.base import LLMProvider
 from docsense.llm.factory import get_provider
 from docsense.retrieval.hybrid import Hit, retrieve
@@ -44,12 +45,13 @@ def build_prompt(question: str, hits: list[Hit]) -> str:
 
 
 def ask(question: str, provider: LLMProvider | None = None, top_k: int | None = None) -> RagAnswer:
-    provider = provider or get_provider()
-    hits = retrieve(question, top_k=top_k)
-    prompt = build_prompt(question, hits)
-    max_tokens = get_config()["rag"]["max_answer_tokens"]
-    answer = provider.complete(prompt, system=SYSTEM, max_tokens=max_tokens)
-    return RagAnswer(answer=answer, hits=hits, provider=provider.name)
+    """Answer a question using the declarative DAG pipeline."""
+    prov = provider or get_provider()
+    k = top_k or get_config()["retrieval"].get("top_k", 5)
+    results = run_doc_qa_dag(question=question, provider=prov, top_k=k)
+    hits: list[Hit] = results["rrf_merge"].data
+    answer: str = results["llm_synthesis"].data
+    return RagAnswer(answer=answer, hits=hits, provider=prov.name)
 
 
 def ask_stream(
@@ -60,4 +62,5 @@ def ask_stream(
     hits = retrieve(question, top_k=top_k)
     prompt = build_prompt(question, hits)
     max_tokens = get_config()["rag"]["max_answer_tokens"]
-    return hits, provider.stream(prompt, system=SYSTEM, max_tokens=max_tokens)
+    stream = provider.stream(prompt, system=SYSTEM, max_tokens=max_tokens)
+    return hits, stream

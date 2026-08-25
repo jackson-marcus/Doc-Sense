@@ -15,8 +15,18 @@ logger = logging.getLogger(__name__)
 @functools.lru_cache(maxsize=1)
 def _client():
     import chromadb
+    from chromadb.config import Settings
 
-    return chromadb.PersistentClient(path=str(resolve_path(get_config()["indexing"]["chroma_dir"])))
+    persist_dir = str(resolve_path(get_config()["indexing"]["chroma_dir"]))
+    return chromadb.PersistentClient(
+        path=persist_dir,
+        settings=Settings(
+            chroma_server_api_default="chromadb.api.segment.SegmentAPI",
+            is_persistent=True,
+            persist_directory=persist_dir,
+            anonymized_telemetry=False,
+        ),
+    )
 
 
 def get_collection(name: str | None = None):

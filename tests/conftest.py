@@ -15,6 +15,7 @@ import pytest
 
 import docsense.indexing.store as store
 import docsense.retrieval.hybrid as hybrid
+from docsense.indexing.chunker import Chunk
 from docsense.settings import get_config
 
 DIM = 64
@@ -84,8 +85,6 @@ def scanned_pdf(tmp_path):
 
 def make_corpus() -> list:
     """Small chunk corpus with distinct topics for retrieval tests."""
-    from docsense.indexing.chunker import Chunk
-
     docs = {
         "acme-10k": [
             "Total revenue was 12.5 million dollars in fiscal year 2025.",
@@ -103,3 +102,19 @@ def make_corpus() -> list:
         for i, text in enumerate(texts):
             chunks.append(Chunk(f"{doc_id}:p{i + 1}:c0", doc_id, i + 1, text, "digital"))
     return chunks
+
+
+@pytest.fixture()
+def fake_llm():
+    from docsense.llm.base import LLMProvider
+
+    class _Fake(LLMProvider):
+        name = "fake"
+
+        def complete(self, prompt: str, system: str | None = None, max_tokens: int = 512) -> str:
+            return "According to [acme-10k, p.1], revenue was 12.5 million dollars."
+
+        def stream(self, prompt: str, system: str | None = None, max_tokens: int = 512):
+            yield "According to [acme-10k, p.1], revenue was 12.5 million dollars."
+
+    return _Fake()

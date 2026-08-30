@@ -17,8 +17,6 @@
 
 </div>
 
-> **Portfolio project.** Built to demonstrate a declarative DAG pipeline pattern and grounded RAG on realistic (synthetic) documents. Not hardened for production use.
-
 ---
 
 ## The problem
@@ -70,6 +68,53 @@ $$\text{RRF}(d) = \sum_{r \in \{\text{dense},\,\text{BM25}\}} \frac{1}{k + \text
 
 A document ranked highly by either retriever surfaces; a document ranked highly by both dominates. The constant `k = 60` damps the influence of low-rank positions. This is implemented identically in the DAG (`RRFMergeNode`) and in the standalone `retrieval/hybrid.retrieve()` helper used by evaluation. Setting `retrieval.hybrid: false` in the config drops BM25 and runs dense-only.
 
+## Watching an ingest happen
+
+`/ask` streams, because nobody wants to stare at a blank box while a model
+writes. Ingestion had the opposite shape: `/upload` returns only once the whole
+document is loaded, chunked, embedded and indexed. For a two-page digital PDF
+that is instant. For a long scanned one, OCR runs page by page and dominates the
+wall clock, so the caller holds a silent connection with no idea whether the job
+is progressing or wedged.
+
+It was also all-or-nothing in the way that matters least. If the store rejected
+a batch two thirds of the way in, the exception discarded the report — even
+though the batches that already landed were still in the collection, indexed and
+searchable. The caller was told "it failed" and nothing about how far it got.
+
+`/upload/stream` runs the same work as observable steps:
+
+| Event | Carries |
+|---|---|
+| `load` | page count and how many pages needed OCR |
+| `chunk` | how many chunks the document produced |
+| `index` | one per batch: batch number, chunks indexed so far, progress |
+| `failed` | which batch died, the error, and how much survived it |
+| `complete` | the full report, including a partial one |
+
+Each batch is upserted on its own, so **whatever lands stays landed**. A test
+injects a store failure on the second batch and asserts the first chunk is still
+queryable afterwards — partial progress is a property, not an accident.
+
+### A bug this surfaced
+
+Building the per-batch path immediately broke, which turned out to be real and
+pre-existing: the second upsert into a persistent collection died with
+`'_Index' object has no attribute 'open_file_handles'`.
+
+The client was pinning `chroma_server_api_default` to the legacy `SegmentAPI`,
+which forces Chroma 1.x down its old Python HNSW path — and that path needs the
+`hnswlib` C extension, which is not installed here. A single-batch document
+appeared to work fine, so nothing caught it until a document needed two batches.
+Dropping the pin puts the client back on Chroma's default Rust backend, where
+sequential upserts work.
+
+The test suite had been hiding it. A root `conftest.py` replaced the Rust API
+with the legacy one *and* injected a fake `hnswlib` whose `add_items` did
+nothing and whose `knn_query` returned zeros — so vector search returned
+fabricated empty results and the tests passed anyway. That file is gone; the
+suite now runs against the real backend.
+
 ## Getting started
 
 Requires Python 3.12, [`uv`](https://github.com/astral-sh/uv), and — for OCR — the Tesseract and Poppler binaries (bundled in the Docker image).
@@ -110,6 +155,7 @@ The FastAPI app (`docsense.api.main:app`) exposes:
 | `GET` | `/health` | Liveness check + active LLM provider |
 | `GET` | `/documents` | Indexed documents and their chunk counts |
 | `POST` | `/upload` | Upload a PDF; ingests and indexes it, returns page/OCR/chunk counts |
+| `POST` | `/upload/stream` | Upload a PDF and watch it ingest: per-page load, chunking, and every batch as it lands |
 | `POST` | `/ask` | Ask a question; streams `sources` then `token` events over SSE |
 
 The `/ask` endpoint returns a Server-Sent Events stream: a first `sources` event listing the retrieved chunks (doc, page, score, preview), then a sequence of `token` events, and finally a `done` event.
@@ -136,7 +182,9 @@ No benchmark numbers are quoted here: the results depend on the generated docume
 make test                    # uv run pytest --cov
 ```
 
-Coverage spans the DAG runner and pipeline (`test_dag_pipeline.py`), hybrid retrieval and RRF fusion (`test_hybrid.py`), chunking (`test_chunker.py`), the RAG chain (`test_chain.py`), the provider factory (`test_llm_factory.py`), PDF loading (`test_loader.py`), and the HTTP contract (`test_api.py`). Tests use the deterministic `fake` LLM provider, so no API keys or network calls are needed.
+Coverage spans the DAG runner and pipeline (`test_dag_pipeline.py`), hybrid retrieval and RRF fusion (`test_hybrid.py`), chunking (`test_chunker.py`), the RAG chain (`test_chain.py`), the provider factory (`test_llm_factory.py`), PDF loading (`test_loader.py`), the HTTP contract (`test_api.py`), and observable ingestion (`test_realtime_streaming.py`: progress ordering, generator laziness, and that a failed batch leaves the earlier chunks queryable). Tests use the deterministic `fake` LLM provider, so no API keys or network calls are needed.
+
+Embeddings are stubbed for speed, but Chroma runs for real: the suite exercises the same persistence path the service uses, which is how the second-upsert bug above became visible.
 
 ## Limitations
 
@@ -144,12 +192,16 @@ Coverage spans the DAG runner and pipeline (`test_dag_pipeline.py`), hybrid retr
 - Answer grounding is only as good as retrieval — if no relevant chunk surfaces in the top-k, the LLM has nothing correct to cite.
 - The LLM judge is a convenience signal, not ground truth; judged-accuracy should be read alongside the retrieval metrics.
 - The bundled documents and QA pairs are synthetic; chunking and retrieval settings would need retuning on a real corpus.
+- A failed ingest is resumable only in the sense that what landed stays landed. There is no checkpoint to restart from: re-uploading re-does the whole document, and the already-indexed chunks are overwritten by id rather than skipped.
+- Progress is reported per batch, not per page. OCR happens inside the `load` step, so a long scanned document is still one silent stretch before the first event.
 
 ## Project structure
 
 ```
 src/docsense/
 ├── dag/          # DAG core: node contract, topological runner, pipeline builder
+├── pubsub/       # in-process broker; the subscriber ingests a document as observable steps
+├── gateway/      # document frame handler and the SSE progress projection
 ├── ingestion/    # PDF loading + Tesseract OCR + ingest pipeline
 ├── indexing/     # chunker, ONNX MiniLM embedder, ChromaDB store
 ├── retrieval/    # dense + BM25 search fused with RRF

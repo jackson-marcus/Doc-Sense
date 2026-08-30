@@ -1,4 +1,4 @@
-"""API routes: /upload, /ask (SSE streaming), /documents, /health."""
+"""API routes: /upload, /upload/stream, /ask (SSE streaming), /documents, /health."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from docsense.gateway.sse_handler import SseHandler
 from docsense.indexing.store import list_documents
 from docsense.ingestion.pipeline import ingest_pdf
 from docsense.llm.factory import get_provider
@@ -89,5 +90,35 @@ def ask_endpoint(request: AskRequest) -> EventSourceResponse:
             logger.exception("Streaming failure")
             yield {"event": "error", "data": str(exc)}
         yield {"event": "done", "data": provider.name}
+
+    return EventSourceResponse(event_stream())
+
+
+@router.post("/upload/stream")
+async def upload_stream(file: UploadFile) -> EventSourceResponse:
+    """Upload a PDF and watch it being ingested, one step at a time.
+
+    `/upload` returns only when everything is done, which on a long scanned
+    document means a silent connection for as long as OCR takes. This reports
+    each page load, the chunking, and every batch as it lands - and if a batch
+    fails, says which one and how much survived it.
+    """
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=422, detail="Only PDF files are accepted")
+
+    raw_dir = resolve_path(get_config()["ingestion"]["raw_dir"])
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    # Sanitize: keep the basename only.
+    dest = raw_dir / Path(file.filename).name
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(await file.read())
+        tmp_path = Path(tmp.name)
+    tmp_path.replace(dest)
+
+    handler = SseHandler()
+
+    def event_stream():
+        for item in handler.stream({"path": str(dest)}):
+            yield {"event": item["event"], "data": json.dumps(item["data"], default=str)}
 
     return EventSourceResponse(event_stream())

@@ -14,18 +14,22 @@ logger = logging.getLogger(__name__)
 
 @functools.lru_cache(maxsize=1)
 def _client():
+    """A persistent Chroma client on its default (Rust) backend.
+
+    This deliberately does NOT pin `chroma_server_api_default` to the legacy
+    `SegmentAPI`. Doing so forces Chroma 1.x down its old Python HNSW path,
+    which needs the `hnswlib` C extension - and when that is absent the second
+    upsert into a collection dies with `'_Index' object has no attribute
+    'open_file_handles'`. A single-batch document appeared to work, so the
+    failure only showed up once a document was large enough to need two.
+    """
     import chromadb
     from chromadb.config import Settings
 
     persist_dir = str(resolve_path(get_config()["indexing"]["chroma_dir"]))
     return chromadb.PersistentClient(
         path=persist_dir,
-        settings=Settings(
-            chroma_server_api_default="chromadb.api.segment.SegmentAPI",
-            is_persistent=True,
-            persist_directory=persist_dir,
-            anonymized_telemetry=False,
-        ),
+        settings=Settings(anonymized_telemetry=False),
     )
 
 

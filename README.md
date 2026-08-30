@@ -1,62 +1,175 @@
-# DocSense — Document Intelligence (Declarative DAG Pipeline) <div align="center"> [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-App-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![MLflow](https://img.shields.io/badge/MLflow-Registry-0194E2.svg?logo=mlflow&logoColor=white)](https://mlflow.org/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
-[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
-[![Tests: Pytest](https://img.shields.io/badge/tests-pytest-blue.svg?logo=pytest&logoColor=white)](https://pytest.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) </div> > **Multimodal document intelligence and grounded Q&A system architected as an explicit Declarative Directed Acyclic Graph (DAG) pipeline with topological stage scheduling, node result caching, and hybrid lexical-dense retrieval.** --- ## 🏛️ Architecture Pattern: Declarative DAG Pipeline Architecture Complex retrieval-augmented generation (RAG) systems suffer when implemented as procedural monolithic scripts. Changes to embedding models, chunking strategies, or fusion algorithms cause cascading side effects. `docsense` decomposes the document ingestion and Q&A lifecycle into a **Declarative Directed Acyclic Graph (DAG)** of pure, typed compute nodes: ```mermaid
-> **Note:** This is a portfolio project demonstrating software engineering patterns and ML concepts. Not intended for production use without further hardening. graph TD subgraph Input_Stage ["Query Input"] Q[Natural Language Question] end subgraph Retrieval_DAG ["Parallel Retrieval Stage"] DenseNode[DenseRetrievalNode<br/>Cosine Nearest Neighbor] BM25Node[BM25RetrievalNode<br/>Lexical BM25Okapi] end subgraph Fusion_DAG ["Rank Fusion & Context Assembly"] RRFNode[RRFMergeNode<br/>Reciprocal Rank Fusion k=60] CtxNode[ContextAssemblyNode<br/>Token Window Packing] end subgraph Synthesis_DAG ["Prompting & LLM Generation"] PromptNode[PromptFormatNode<br/>Template Variable Binding] LLMNode[LLMSynthesisNode<br/>Claude / Ollama / FakeProvider] end Q --> DenseNode Q --> BM25Node DenseNode --> RRFNode BM25Node --> RRFNode RRFNode --> CtxNode CtxNode --> PromptNode Q --> PromptNode PromptNode --> LLMNode
-``` ### DAG Architecture Highlights
-- **`dag/node.py`**: Protocol defining `DAGNode` and `NodeResult` with explicit dependencies and typed context passing.
-- **`dag/graph.py`**: Topological graph runner implementing Kahn's algorithm with cycle detection and dependency validation.
-- **`dag/nodes.py`**: Discrete pure execution nodes: - `DenseRetrievalNode`: Executes cosine semantic similarity over vector embeddings. - `BM25RetrievalNode`: Executes tokenized lexical frequency scoring. - `RRFMergeNode`: Performs non-parametric Reciprocal Rank Fusion ($k=60$). - `ContextAssemblyNode`: Enforces strict character and token window constraints. - `PromptFormatNode`: Injects retrieved snippets with page-level citations. - `LLMSynthesisNode`: Invokes LLM providers with streaming and batch contracts.
-- **`dag/pipeline.py`**: High-level declarative pipeline factory `build_doc_qa_dag()` and execution runner. --- ## 📑 Core Methodologies & Retrieval Formulation ### 1. Document Extraction & OCR Pipeline
-- Direct text extraction for digital PDFs via PyPDF.
-- Automatic OCR fallback for scanned documents and images using Tesseract / PaddleOCR with deskewing and contrast preprocessing. ### 2. Hybrid Lexical-Dense Retrieval (RRF)
-- Merges ranked lists using Reciprocal Rank Fusion: $$\text{RRF}(d) = \sum_{m \in \{\text{BM25}, \text{Dense}\}} \frac{1}{k + r_m(d)}, \quad k = 60$$
-- Eliminates score scale calibration issues between cosine distance and unbounded BM25 scores. ### 3. Provenance-Grounded Citations
-- Generates verified answers with exact document IDs, page indices, and source snippets.
-- Hot-swappable LLM backends supporting Anthropic Claude, local Ollama (Llama 3/Mistral), and deterministic mocks for offline CI. --- ## 🚀 Quickstart & Setup Guide ### 1. Prerequisites & Environment Setup
+<div align="center">
+
+<img src="docs/brand/banner.svg" alt="DocSense — Document Intelligence as a Declarative DAG" width="720">
+
+</div>
+
+# DocSense — Document Intelligence as a Declarative DAG
+
+**Ask questions of your PDFs and get answers with page-level citations.** DocSense ingests documents (running OCR on scanned pages automatically), retrieves the relevant passages with a hybrid lexical + semantic search, and has an LLM synthesise a grounded answer. The whole question-answering flow is built as an explicit **Directed Acyclic Graph (DAG)** of small, typed nodes — so each stage (retrieve, fuse, assemble, prompt, synthesise) can be read, tested, and swapped in isolation.
+
+<div align="center">
+
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/API-FastAPI-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Tests: pytest](https://img.shields.io/badge/tests-pytest-0A9EDC.svg?logo=pytest&logoColor=white)](https://pytest.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
+
+</div>
+
+> **Portfolio project.** Built to demonstrate a declarative DAG pipeline pattern and grounded RAG on realistic (synthetic) documents. Not hardened for production use.
+
+---
+
+## The problem
+
+RAG systems are easy to prototype and hard to maintain. Written as one long procedural script, the ingest → retrieve → fuse → prompt → generate flow becomes a tangle: changing the chunker perturbs retrieval, swapping the embedding model quietly changes fusion, and there is no clean seam to unit-test a single stage. You end up afraid to touch it.
+
+DocSense treats the pipeline as a **graph of pure functions**. Each stage is a node with declared dependencies and a typed result; a runner topologically orders them and passes each node exactly the upstream outputs it asked for. Swapping a retriever or the LLM backend is a local change to one node, not a rewrite.
+
+## What it does
+
+- **Ingests PDFs** — extracts text from digital PDFs, and falls back to OCR (Tesseract) for scanned pages, recording a per-page confidence score.
+- **Indexes** — chunks pages, embeds them with an ONNX MiniLM model, and stores vectors in ChromaDB alongside a BM25 lexical index.
+- **Answers questions** — retrieves candidates from both retrievers, fuses them, packs a context window, and streams an LLM answer that cites the source `doc_id` and page for every claim.
+- **Swaps LLM backends** — Anthropic Claude, a local Ollama model, or a deterministic `fake` provider for offline tests and CI, selected by config.
+
+## How it works
+
+The question-answering flow is assembled by `build_doc_qa_dag()` and run by a topological graph executor (`dag/graph.py`, Kahn's algorithm with cycle detection). Dense and lexical retrieval have no dependencies, so they are independent branches that both feed the fusion node:
+
+```mermaid
+flowchart TD
+    Q["Question"] --> D["DenseRetrievalNode<br/>MiniLM + Chroma cosine kNN"]
+    Q --> B["BM25RetrievalNode<br/>lexical BM25Okapi"]
+    D --> R["RRFMergeNode<br/>reciprocal rank fusion (k=60)"]
+    B --> R
+    R --> C["ContextAssemblyNode<br/>token-window packing"]
+    C --> P["PromptFormatNode<br/>template + citations"]
+    Q --> P
+    P --> L["LLMSynthesisNode<br/>Claude / Ollama / Fake"]
+    L --> A["Grounded answer + sources"]
+```
+
+Each node exposes a `name`, a `dependencies` list, and an `execute(inputs, context)` method (`dag/node.py`). The runner validates the dependency graph, orders nodes topologically, and hands each one only the outputs of its declared upstreams — so a node cannot secretly depend on global state.
+
+| Node | Role |
+|---|---|
+| `DenseRetrievalNode` | Embeds the question and pulls nearest-neighbour chunks from Chroma |
+| `BM25RetrievalNode` | Scores chunks by lexical term frequency (BM25Okapi) |
+| `RRFMergeNode` | Fuses the two ranked lists with Reciprocal Rank Fusion |
+| `ContextAssemblyNode` | Packs top hits into a bounded context window (`max_context_chars`) |
+| `PromptFormatNode` | Binds context + question into the grounded prompt template |
+| `LLMSynthesisNode` | Calls the configured provider to synthesise the cited answer |
+
+## Retrieval methodology
+
+Dense and lexical retrievers return incomparable scores — cosine similarity is bounded, BM25 is not — so DocSense never tries to normalise one against the other. It fuses them by **rank** instead. Each document's fused score sums the reciprocal of its rank in each list:
+
+$$\text{RRF}(d) = \sum_{r \in \{\text{dense},\,\text{BM25}\}} \frac{1}{k + \text{rank}_r(d)}, \qquad k = 60$$
+
+A document ranked highly by either retriever surfaces; a document ranked highly by both dominates. The constant `k = 60` damps the influence of low-rank positions. This is implemented identically in the DAG (`RRFMergeNode`) and in the standalone `retrieval/hybrid.retrieve()` helper used by evaluation. Setting `retrieval.hybrid: false` in the config drops BM25 and runs dense-only.
+
+## Getting started
+
+Requires Python 3.12, [`uv`](https://github.com/astral-sh/uv), and — for OCR — the Tesseract and Poppler binaries (bundled in the Docker image).
+
 ```bash
-# Clone repository
-git clone https://github.com/jackson-marcus/docsense.git
-cd docsense # Install dependencies via uv
-$env:UV_CACHE_DIR = "D:\ml-projects\.uv-cache"
-uv sync --group dev
-``` ### 2. Run Test Suite & Code Quality Checks
+make install                 # uv sync --group dev
+make test                    # run the test suite
+
+make fetch-data              # download sample EDGAR filings + build scanned copies
+make ingest                  # ingest data/raw_pdfs into the index
+
+make api                     # FastAPI on http://localhost:8010
+make ui                      # Streamlit workspace on http://localhost:8501
+```
+
+By default the LLM provider is `claude` (set `ANTHROPIC_API_KEY`). For fully offline use, set `LLM_PROVIDER=fake` or `LLM_PROVIDER=ollama` (with a local Ollama server). Or run everything in containers:
+
 ```bash
-# Run unit & DAG pipeline tests
-uv run pytest -q # Run ruff linter and formatting checks
-uv run ruff check .
-uv run ruff format --check .
-``` ### 3. Launch Services Locally
+make docker-up               # docker compose up --build -d
+make docker-down
+```
+
+### Run the pipeline directly
+
+```python
+from docsense.rag.chain import ask
+
+result = ask("What was the reported revenue for fiscal 2023?")
+print(result.answer)         # answer text with [doc_id, p.N] citations
+```
+
+## API
+
+The FastAPI app (`docsense.api.main:app`) exposes:
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/health` | Liveness check + active LLM provider |
+| `GET` | `/documents` | Indexed documents and their chunk counts |
+| `POST` | `/upload` | Upload a PDF; ingests and indexes it, returns page/OCR/chunk counts |
+| `POST` | `/ask` | Ask a question; streams `sources` then `token` events over SSE |
+
+The `/ask` endpoint returns a Server-Sent Events stream: a first `sources` event listing the retrieved chunks (doc, page, score, preview), then a sequence of `token` events, and finally a `done` event.
+
+## Evaluation
+
+Evaluation is a retrieval-and-answer harness (`docsense.rag.eval`) driven by a gold set of question/answer pairs (`data/eval/qa_pairs.jsonl`), each tagged with the expected `doc_id` and page.
+
+- **Retrieval metrics** — hit-rate@k and MRR@k: does a chunk from the gold (doc, page) surface in the top-k?
+- **Answer quality (optional, `--judge`)** — each gold question is answered through the RAG chain and graded CORRECT/INCORRECT by an LLM judge, yielding a judged-accuracy figure.
+
+Every run is logged to MLflow as one experiment run, so chunk size, top-k, and hybrid-on/off are explored with the same bookkeeping as model hyperparameters:
+
 ```bash
-# Start FastAPI REST API (listening on port :8010)
-make api # Start interactive Streamlit document workspace (listening on port :8511)
-make ui
-``` --- ## 📂 Repository Layout ```
-docsense/
-├── configs/ # Configuration files (retrieval, chunking, LLM)
-├── data/ # Document store and persistent indices
-├── src/docsense/ # Core Python package
-│ ├── dag/ # Declarative DAG pipeline (graph runner, node contracts, pipeline builder)
-│ ├── ingestion/ # OCR and PDF loaders
-│ ├── indexing/ # Text chunker, embeddings, and Chroma store
-│ ├── retrieval/ # Dense and BM25 search engines with RRF fusion
-│ ├── llm/ # LLM provider factory (Claude, Ollama, Fake)
-│ ├── rag/ # RAG chain wrapping DAG execution
-│ ├── api/ # FastAPI REST routes and streaming endpoints
-│ └── ui/ # Streamlit interactive application
-├── tests/ # Comprehensive Pytest suite covering DAG and RAG
-├── docker-compose.yml # Multi-service container orchestration
-├── Dockerfile # Container definition for API service
-└── pyproject.toml # Pinned dependencies and tool configs
-``` --- ## 👤 Author & Contact **Jackson Marcus**
-- **Email:** [jackson.marcus.work@gmail.com](mailto:jackson.marcus.work@gmail.com)
-- **Upwork:** [Jackson Marcus on Upwork](https://www.upwork.com/freelancers/~012235717501ad9c7b)
-- **GitHub:** [@jackson-marcus](https://github.com/jackson-marcus) --- ## 👨‍💻 Author & Maintainer <div align="center"> ### **Jackson Marcus**
-**Senior AI & Machine Learning Engineer**
-*Building ML Systems, Agentic Architectures & Scalable Data Pipelines* [![GitHub Profile](https://img.shields.io/badge/GitHub-jackson--marcus-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/jackson-marcus)
-[![Upwork Portfolio](https://img.shields.io/badge/Upwork-Top%20Rated%20Plus-14A800?style=for-the-badge&logo=upwork&logoColor=white)](https://www.upwork.com/freelancers/~012235717501ad9c7b)
-[![Email Contact](https://img.shields.io/badge/Email-wajahatanees41%40gmail.com-D14836?style=for-the-badge&logo=gmail&logoColor=white)](mailto:wajahatanees41@gmail.com) 📍 *Byron, GA, USA* </div>
+make eval                    # python -m docsense.rag.eval
+make mlflow                  # MLflow UI on http://localhost:5001
+```
+
+No benchmark numbers are quoted here: the results depend on the generated documents, the chosen provider, and the config, so run the harness to produce them for your setup.
+
+## Testing
+
+```bash
+make test                    # uv run pytest --cov
+```
+
+Coverage spans the DAG runner and pipeline (`test_dag_pipeline.py`), hybrid retrieval and RRF fusion (`test_hybrid.py`), chunking (`test_chunker.py`), the RAG chain (`test_chain.py`), the provider factory (`test_llm_factory.py`), PDF loading (`test_loader.py`), and the HTTP contract (`test_api.py`). Tests use the deterministic `fake` LLM provider, so no API keys or network calls are needed.
+
+## Limitations
+
+- OCR quality depends on scan resolution; low-confidence pages produce noisy chunks that retrieval cannot recover.
+- Answer grounding is only as good as retrieval — if no relevant chunk surfaces in the top-k, the LLM has nothing correct to cite.
+- The LLM judge is a convenience signal, not ground truth; judged-accuracy should be read alongside the retrieval metrics.
+- The bundled documents and QA pairs are synthetic; chunking and retrieval settings would need retuning on a real corpus.
+
+## Project structure
+
+```
+src/docsense/
+├── dag/          # DAG core: node contract, topological runner, pipeline builder
+├── ingestion/    # PDF loading + Tesseract OCR + ingest pipeline
+├── indexing/     # chunker, ONNX MiniLM embedder, ChromaDB store
+├── retrieval/    # dense + BM25 search fused with RRF
+├── llm/          # provider factory (Claude / Ollama / Fake)
+├── rag/          # RAG chain over the DAG + evaluation harness
+├── api/          # FastAPI app (main:app) and SSE routes
+└── ui/           # Streamlit document workspace
+```
+
+## License
+
+MIT
+
+---
+
+<div align="center">
+
+**Jackson Marcus** · Senior AI & Machine Learning Engineer
+
+[![GitHub](https://img.shields.io/badge/GitHub-jackson--marcus-181717?logo=github&logoColor=white)](https://github.com/jackson-marcus)
+[![Email](https://img.shields.io/badge/Email-contact-D14836?logo=gmail&logoColor=white)](mailto:wajahatanees41@gmail.com)
+
+</div>

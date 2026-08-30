@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="168" viewBox="0 0 720 168" role="img" aria-label="DocSense — Document intelligence as a DAG">
+  <defs><linearGradient id="b51884" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#9333EA"/><stop offset="1" stop-color="#6924a8"/></linearGradient></defs>
+  <rect x="28" y="28" width="112" height="112" rx="25" fill="url(#b51884)"/>
+  <g transform="translate(56.0 56.0) scale(2.3333)"><g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6Z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 16h6"/></g></g>
+  <text x="168" y="78" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="40" font-weight="700" fill="#9333EA">DocSense</text>
+  <text x="168" y="112" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="20" font-weight="400" fill="#64748b">Document intelligence as a DAG</text>
+</svg>

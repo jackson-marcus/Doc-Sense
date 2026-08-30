@@ -23,6 +23,8 @@ dependencies = [
     "pydantic-settings>=2.3",
     "pyyaml>=6.0",
     "reportlab>=4.2",
+    "streamlit>=1.36",
+    "mlflow>=2.14",
 ]
 
 [dependency-groups]
